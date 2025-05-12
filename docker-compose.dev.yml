@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cid-api-postgres
+    restart: unless-stopped
+    env_file: ".env"
+    environment:
+      POSTGRESQL_DATABASE: ${DB_NAME}
+      POSTGRESQL_PASSWORD: ${DB_PASSWORD}
+      POSTGRESQL_USERNAME: ${DB_USER}
+      POSTGRES_HOST: ${DB_HOST}
+    healthcheck:
+      test: [
+        "CMD-SHELL",
+        "pg_isready -U ${DB_USER} -d ${DB_NAME}"
+      ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - cid-api-volumes:/var/lib/postgresql/data
+    networks:
+        - cid-api-network
+
+  migrate:
+    image: migrate/migrate
+    container_name: cid-api-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cid-api-network
+    volumes:
+      - ./internal/infra/database/:/db
+    command: [ "-path", "/db/migrations/", "-database", "postgresql://root:root@postgres:5432/cid_db?sslmode=disable", "up" ]
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: "development"
+    container_name: cid-api-app
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: ${PORT}
+      LOG_LEVEL: ${LOG_LEVEL}
+      DB_HOST: postgres
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    env_file:
+      - ./.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - cid-api-network
+    volumes:
+      - .:/app
+
+volumes:
+  cid-api-volumes:
+
+networks:
+  cid-api-network:
+    driver: bridge

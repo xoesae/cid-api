@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cid-api-prod-postgres
+    restart: unless-stopped
+    env_file: ".env"
+    environment:
+      POSTGRESQL_DATABASE: ${DB_NAME}
+      POSTGRESQL_PASSWORD: ${DB_PASSWORD}
+      POSTGRESQL_USERNAME: ${DB_USER}
+      POSTGRESQL_HOST: ${DB_HOST}
+    healthcheck:
+      test: [
+        "CMD-SHELL",
+        "pg_isready -U ${DB_USER} -d ${DB_NAME}"
+      ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - cid-api-prod-volumes:/var/lib/postgresql/data
+    networks:
+      - cid-api-prod-network
+
+  migrate:
+    image: migrate/migrate
+    container_name: cid-api-prod-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cid-api-prod-network
+    volumes:
+      - ./internal/infra/database/:/db
+    command: [ "-path", "/db/migrations/", "-database", "postgresql://root:root@postgres:5432/cid_db?sslmode=disable", "up" ]
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: cid-api-prod-app
+    environment:
+      PORT: ${PORT}
+      LOG_LEVEL: ${LOG_LEVEL}
+      DB_HOST: postgres
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    env_file:
+      - ./.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - cid-api-prod-network
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: cid-api-prod-nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/api/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    networks:
+      - cid-api-prod-network
+
+volumes:
+  cid-api-prod-volumes:
+
+networks:
+  cid-api-prod-network:
+    driver: bridge
